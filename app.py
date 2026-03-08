@@ -141,35 +141,35 @@ def register_files(files_dict: dict):
             st.session_state.type_overrides[fname] = detect_form_type(fname)
 
 
+def docx_to_markdown(file_path: str) -> str:
+    from docx import Document
+    doc = Document(file_path)
+    lines = []
+    for para in doc.paragraphs:
+        text = para.text.strip()
+        if not text:
+            continue
+        style = para.style.name
+        if "Heading 1" in style:   lines.append(f"# {text}")
+        elif "Heading 2" in style: lines.append(f"## {text}")
+        elif "Heading 3" in style: lines.append(f"### {text}")
+        else:                      lines.append(text)
+    return "\n".join(lines)
+
+
 def extract_to_md(file_path: str, form_type: str) -> str:
+    import pymupdf4llm
     fp  = Path(file_path)
     ext = fp.suffix.lower()
     out_path = os.path.join(MD_DIR, f"{fp.stem}.md")
 
-    if form_type in ("3a", "3b", "3c") and ext == ".pdf":
-        import pymupdf4llm
-        md_text = pymupdf4llm.to_markdown(file_path)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(md_text)
+    if ext == ".docx":
+        md_text = docx_to_markdown(file_path)
     else:
-        # 3d (any ext) OR 3a/3b/3c with .docx → marker
-        from marker.converters.pdf import PdfConverter
-        from marker.models import create_model_dict
-        from marker.config.parser import ConfigParser
-        from marker.output import text_from_rendered
+        md_text = pymupdf4llm.to_markdown(file_path)
 
-        models        = create_model_dict()
-        config_parser = ConfigParser({"output_format": "markdown"})
-        converter     = PdfConverter(
-            config=config_parser.generate_config_dict(),
-            artifact_dict=models,
-            processor_list=config_parser.get_processors(),
-            renderer=config_parser.get_renderer()
-        )
-        rendered            = converter(file_path)
-        markdown_text, _, _ = text_from_rendered(rendered)
-        with open(out_path, "w", encoding="utf-8") as f:
-            f.write(markdown_text)
+    with open(out_path, "w", encoding="utf-8") as f:
+        f.write(md_text)
 
     return out_path
 
