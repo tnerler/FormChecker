@@ -10,6 +10,8 @@ from marker.config.parser import ConfigParser
 from marker.output import text_from_rendered
 from pathlib import Path
 import os
+from markitdown import MarkItDown
+
 
 def extract_text(form_path_list: str):
 
@@ -36,17 +38,9 @@ def extract_text_for_paper(form_path_list: list):
         file_path = Path(form_path)
         root, extension = os.path.splitext(file_path.name)
 
-        config_parser = ConfigParser({"output_format": "markdown"})
-
-        converter = PdfConverter(
-            config=config_parser.generate_config_dict(),
-            artifact_dict=models,
-            processor_list=config_parser.get_processors(),
-            renderer=config_parser.get_renderer()
-        )
-
-        rendered = converter(form_path)
-        markdown_text, _, _ = text_from_rendered(rendered)
+        md = MarkItDown(enable_plugins=False) # Set to True to enable plugins
+        result = md.convert(form_path)
+        markdown_text = result.text_content
 
         output_path = Path(f"output_of_forms/{root}.md")
         output_path.parent.mkdir(parents=True, exist_ok=True)
