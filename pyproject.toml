@@ -1,0 +1,12 @@
+[project]
+name = "documentai-version-2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "dotenv>=0.9.9",
+    "openai>=2.26.0",
+    "pymupdf4llm>=0.3.4",
+    "streamlit>=1.55.0",
+]

@@ -1,0 +1,2 @@
+ # The unknown paper should be determined as 3d form, because there is no 3d in the name. IN the main UI, the user
+# should pick manually (whether it is 3a, 3b, 3c, 3d) if the unknown paper is exists. and according to that, spesific function must run.
