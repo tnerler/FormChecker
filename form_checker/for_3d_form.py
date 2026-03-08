@@ -1,10 +1,25 @@
 import re
 import json
+import logging
 from utils.which_type import get_the_list_of_types
 from pathlib import Path
 import os
 from openai import OpenAI
 from dotenv import load_dotenv
+
+load_dotenv()
+client = OpenAI()
+
+# ── Logging setup ─────────────────────────────────────────────────────────────
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("logs.txt", encoding="utf-8"),
+        logging.StreamHandler()  # aynı anda terminale de yazar
+    ]
+)
+log = logging.getLogger(__name__)
 
 load_dotenv()
 client = OpenAI()
@@ -50,8 +65,9 @@ def check_title_grammar_llm(title: str) -> dict:
 ##########################
 
 def get_abstract_text(md_text: str) -> str:
-    pattern = r'^#{1,6}\s+Abstract:\s*\n(.*?)(?=\n#{1,6}\s|\n\*\*Keywords:\*\*|\Z)'
-    match = re.search(pattern, md_text, re.DOTALL | re.MULTILINE)
+    # Matches: ## Abstract: (with or without **)
+    pattern = r'^#{1,6}\s+\*?Abstract:?\*?\s*\n(.*?)(?=\nKeywords:|\n\*\*Keywords|\n#{1,6}\s|\Z)'
+    match = re.search(pattern, md_text, re.DOTALL | re.MULTILINE | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
 
@@ -91,8 +107,9 @@ def check_abstract_llm(abstract_text: str) -> dict:
 ##########################
 
 def get_keywords_text(md_text: str) -> str:
-    pattern = r'\*\*Keywords:\*\*\s*\n?(.*?)(?=\n#{1,6}\s|\n\*\*|\Z)'
-    match = re.search(pattern, md_text, re.DOTALL)
+    # Matches: Keywords: or **Keywords:** on same line or next line
+    pattern = r'\*{0,2}Keywords:?\*{0,2}\s*(.*?)(?=\n#{1,6}\s|\n\*\*|\Z)'
+    match = re.search(pattern, md_text, re.DOTALL | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
 
@@ -125,14 +142,17 @@ def check_keywords_llm(keywords_text: str) -> dict:
 ##############################
 
 def get_all_headings(md_text: str) -> list[str]:
-    """Extract all numbered headings from the md text — supports # **1. Title** format."""
-
-    # Matches: # **1. Introduction** / ## **1.1. Background** / ### **2.1.1. Details**
-    pattern = r'^#{1,6}\s+\*\*(\d+(?:\.\d+)*\.?)\s+.*?\*\*'
+    """Extract all numbered headings — supports:
+       ## 1. Title
+       ## 1.\tTitle
+       # **1. Title**
+    """
+    # Matches with or without **, with tab or space after number
+    pattern = r'^#{1,6}\s+\*{0,2}(\d+(?:\.\d+)*\.?)[\s\t]+.*?\*{0,2}\s*$'
 
     all_headings = []
     for line in md_text.split('\n'):
-        match = re.match(pattern, line)
+        match = re.match(pattern, line.strip())
         if match:
             all_headings.append(match.group(1).rstrip('.'))
 
@@ -140,28 +160,23 @@ def get_all_headings(md_text: str) -> list[str]:
 
 
 def check_numbering(headings: list[str]) -> dict:
-    """Check if the numbering is sequential and correct."""
     errors = []
-    
-    # Track current count at each level: {1: 1, 2: 0, 3: 0 ...}
     counters = {}
 
-    for i, heading in enumerate(headings):
+    for heading in headings:
         parts = [int(p) for p in heading.split('.')]
         level = len(parts)
         expected_counter = counters.get(level, 0) + 1
 
-        # Reset all deeper levels when a new heading appears
-        keys_to_reset = [k for k in counters if k > level]
-        for k in keys_to_reset:
+        # Reset deeper levels
+        for k in [k for k in counters if k > level]:
             del counters[k]
 
-        # Check if current number is correct
         if parts[-1] != expected_counter:
+            expected_full = '.'.join(str(p) for p in parts[:-1] + [expected_counter])
             errors.append({
-                "heading": heading,
-                "expected": f"{'.'.join(str(p) for p in parts[:-1])}.{expected_counter}".lstrip('.'),
-                "found": heading
+                "found": heading,
+                "expected": expected_full
             })
 
         counters[level] = parts[-1]
@@ -194,15 +209,19 @@ def check_heading_numbering(md_text: str) -> dict:
 
 def get_references_text(md_text: str) -> str:
     """Extract references section from md text."""
-    pattern = r'^#{1,6}\s+\*\*References\*\*\s*\n(.*?)(?=\n#{1,6}\s|\Z)'
-    match = re.search(pattern, md_text, re.DOTALL | re.MULTILINE)
+    # Matches: ## References, ## **References**, ### References etc.
+    pattern = r'^#{1,6}\s+\*{0,2}References\*{0,2}\s*\n(.*?)(?=\n#{1,6}\s|\Z)'
+    match = re.search(pattern, md_text, re.DOTALL | re.MULTILINE | re.IGNORECASE)
     return match.group(1).strip() if match else ""
 
 
 def parse_references(references_text: str) -> list[str]:
     """Split references into individual entries."""
-    # Each reference is separated by a blank line or a newline starting a new author
-    refs = [r.strip() for r in re.split(r'\n\s*\n', references_text) if r.strip()]
+    refs = []
+    for line in references_text.split('\n'):
+        line = line.strip()
+        if line:
+            refs.append(line)
     return refs
 
 
@@ -260,14 +279,32 @@ def check_form(form_path: str, md_dir: str = "output_of_forms") -> dict:
     root, _ = os.path.splitext(file_path.name)
     md_file_path = f"{md_dir}/{root}.md"
 
-    with open(md_file_path, "r") as f:   # ← use md_dir
+    log.info(f"Starting check: {file_path.name}")
+
+    with open(md_file_path, "r") as f:
         md_text = f.read()
 
-    title_result     = check_title_grammar_llm(get_the_main_title(md_text))
-    abstract_result  = check_abstract_llm(get_abstract_text(md_text))
-    keywords_result  = check_keywords_llm(get_keywords_text(md_text))
+    log.info(f"[{root}] Checking title grammar...")
+    title_result = check_title_grammar_llm(get_the_main_title(md_text))
+    log.info(f"[{root}] Title: {title_result}")
+
+    log.info(f"[{root}] Checking abstract...")
+    abstract_result = check_abstract_llm(get_abstract_text(md_text))
+    log.info(f"[{root}] Abstract: {abstract_result}")
+
+    log.info(f"[{root}] Checking keywords...")
+    keywords_result = check_keywords_llm(get_keywords_text(md_text))
+    log.info(f"[{root}] Keywords: {keywords_result}")
+
+    log.info(f"[{root}] Checking heading numbering...")
     numbering_result = check_heading_numbering(md_text)
+    log.info(f"[{root}] Numbering: {numbering_result}")
+
+    log.info(f"[{root}] Checking references...")
     references_result = check_references_harvard(md_text)
+    log.info(f"[{root}] References: {references_result}")
+
+    log.info(f"[{root}] ✔ Done")
 
     return {
         "form_name": root,
